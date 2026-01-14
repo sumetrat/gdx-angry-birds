@@ -2,20 +2,18 @@
 <html lang="th">
 <head>
     <meta charset="UTF-8">
-    <title>GDX-FOR Angry Birds Style</title>
+    <title>GDX-FOR Carnival (Fixed Audio Delay)</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link href="https://fonts.googleapis.com/css2?family=Bangers&family=Chakra+Petch:wght@400;700&display=swap" rel="stylesheet">
 
     <style>
         body { 
             margin: 0; padding: 0; overflow: hidden; 
-            /* --- ตั้งค่าพื้นหลังเป็นรูปภาพ (background.png) --- */
-            background-color: #87CEEB; 
-            background-image: url('background.png'); /* ใช้ไฟล์นี้ */
+            background-color: #87CEEB;
+            background-image: url('background.png'); 
             background-size: cover; 
             background-position: center;
             background-repeat: no-repeat;
-            
             font-family: 'Chakra Petch', sans-serif; 
             user-select: none; color: white;
         }
@@ -61,6 +59,16 @@
         #status { margin-top: auto; margin-bottom: 30px; font-size: 1.8rem; text-shadow: 2px 2px 4px black; font-family: 'Bangers', cursive; color: #f1c40f;}
         
         #error-box { display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: #c0392b; color: white; padding: 30px; border-radius: 20px; border: 4px solid white; z-index: 999; text-align: center; }
+        
+        #round-overlay {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            font-family: 'Bangers', cursive; 
+            font-size: 8rem; 
+            color: #f1c40f; 
+            text-shadow: 5px 5px 0 #c0392b, 0 0 20px rgba(0,0,0,0.5);
+            pointer-events: none; opacity: 0; transition: transform 0.3s, opacity 0.3s;
+            z-index: 200; white-space: nowrap;
+        }
     </style>
 
     <script src="matter.min.js"></script>
@@ -71,10 +79,15 @@
     <audio id="audio-shoot" src="shoot.mp3"></audio>
     <audio id="audio-hit" src="hit.mp3"></audio>
     <audio id="audio-score" src="score.mp3"></audio>
+    <audio id="audio-round1" src="round1.mp3"></audio>
+    <audio id="audio-round2" src="round2.mp3"></audio>
+    <audio id="audio-round3" src="round3.mp3"></audio>
+    <audio id="audio-gameover" src="gameover.mp3"></audio>
 
     <div id="error-box"><h3>⚠️ Files Missing</h3><p id="error-msg">Check libraries & images.</p></div>
 
     <canvas id="guide-layer"></canvas>
+    <div id="round-overlay">ROUND 1</div>
 
     <div id="ui-layer">
         <button id="connect-btn">🔌 PLAY GAME!</button>
@@ -101,7 +114,18 @@
     <script>
         const guideCanvas = document.getElementById('guide-layer');
         const gCtx = guideCanvas.getContext('2d');
-        
+        const roundOverlay = document.getElementById('round-overlay');
+
+        function showMessage(text) {
+            roundOverlay.innerText = text;
+            roundOverlay.style.opacity = '1';
+            roundOverlay.style.transform = 'translate(-50%, -50%) scale(1.2)';
+            setTimeout(() => {
+                roundOverlay.style.opacity = '0';
+                roundOverlay.style.transform = 'translate(-50%, -50%) scale(1.0)';
+            }, 2000);
+        }
+
         function resizeCanvas() {
             guideCanvas.width = window.innerWidth;
             guideCanvas.height = window.innerHeight;
@@ -112,6 +136,11 @@
         const sfxShoot = document.getElementById('audio-shoot');
         const sfxHit = document.getElementById('audio-hit');
         const sfxScore = document.getElementById('audio-score');
+        const sfxRound1 = document.getElementById('audio-round1');
+        const sfxRound2 = document.getElementById('audio-round2');
+        const sfxRound3 = document.getElementById('audio-round3');
+        const sfxGameOver = document.getElementById('audio-gameover');
+
         function playSound(el) { if(el){ el.currentTime=0; el.play().catch(()=>{}); } }
 
         function checkLibraries() {
@@ -130,14 +159,22 @@
                   Bodies = Matter.Bodies, Composite = Matter.Composite, Body = Matter.Body, 
                   Events = Matter.Events, Common = Matter.Common;
 
-            let engine, render, runner, ball;
+            let engine, render, runner, ball, wall;
             let isAiming = false;
             let currentForce = 0, rawForce = 0, forceOffset = 0;
             let currentAngle = 0, maxForceInSession = 0, score = 0;
             
-            // --- SETTINGS ---
+            let currentRound = 1; 
+            let ballFired = false; 
+            let isTransitioning = false;
+
+            // ==========================================
+            // 🔧 TUNING ZONE
+            // ==========================================
             const FIRE_THRESHOLD = 0.5;
-            const POWER_MULTIPLIER = 0.20; 
+            const POWER_MULTIPLIER = 0.23; 
+            const BIRD_DENSITY = 0.008; 
+            // ==========================================
 
             function initPhysics() {
                 const oldCanvas = document.querySelector('canvas:not(#guide-layer)');
@@ -157,8 +194,7 @@
                 const platform = Bodies.rectangle(150, window.innerHeight - 250, 200, 30, { isStatic: true, render: { fillStyle: '#7f8c8d' } });
 
                 Composite.add(engine.world, [ground, platform]);
-                createTargets();
-                resetBall();
+                fullResetGame(); 
 
                 Render.run(render);
                 runner = Runner.create();
@@ -166,14 +202,20 @@
                 
                 Events.on(engine, 'collisionStart', function(event) {
                     event.pairs.forEach(pair => {
-                        if ((pair.bodyA === ball || pair.bodyB === ball) && (!pair.bodyA.isStatic && !pair.bodyB.isStatic)) {
-                            if (Math.abs(ball.velocity.y) > 1.5 || Math.abs(ball.velocity.x) > 1.5) {
-                                playSound(sfxHit);
-                                createExplosion(pair.collision.supports[0].x, pair.collision.supports[0].y);
+                        const bodyA = pair.bodyA;
+                        const bodyB = pair.bodyB;
+                        if (bodyA === ball || bodyB === ball) {
+                            const other = (bodyA === ball) ? bodyB : bodyA;
+                            if (other.label === 'target' || other.label === 'wall') {
+                                if (Math.abs(ball.velocity.y) > 1.0 || Math.abs(ball.velocity.x) > 1.0) {
+                                    playSound(sfxHit);
+                                    if (other.label === 'target') createExplosion(pair.collision.supports[0].x, pair.collision.supports[0].y);
+                                }
                             }
                         }
                     });
                 });
+
                 Events.on(engine, 'afterUpdate', function() {
                     Composite.allBodies(engine.world).forEach(body => {
                         if (body.label === 'target' && body.position.y > window.innerHeight + 100) {
@@ -183,28 +225,59 @@
                             playSound(sfxScore); 
                         }
                     });
+
+                    if (ballFired && !isTransitioning) {
+                        if (ball.position.x > window.innerWidth || ball.position.y > window.innerHeight + 100 || (ball.speed < 0.05 && ball.position.x > 200)) {
+                            isTransitioning = true;
+                            // --- แก้ไข Delay ตรงนี้ (จาก 2000 เป็น 4000) ---
+                            // รอ 4 วินาที เพื่อให้เสียงระเบิดจบก่อน ค่อยประกาศผล
+                            setTimeout(() => { autoProceed(); }, 4000); 
+                        }
+                    }
                 });
 
                 requestAnimationFrame(drawGuideLoop);
             }
 
+            function updateWalls(round) {
+                Composite.allBodies(engine.world).forEach(b => {
+                    if (b.label === 'wall') Composite.remove(engine.world, b);
+                });
+
+                const wallWidth = 50;  
+                const wallHeight = 300; 
+                const wallY = window.innerHeight - 110; 
+                
+                if (round === 2) {
+                    const wall = Bodies.rectangle(window.innerWidth / 2 - 50, wallY, wallWidth, wallHeight, { 
+                        isStatic: true, label: 'wall',
+                        render: { sprite: { texture: 'column.png', xScale: 0.8, yScale: 1.5 } } 
+                    });
+                    Composite.add(engine.world, wall);
+                } 
+                else if (round === 3) {
+                    const wall1 = Bodies.rectangle(window.innerWidth / 2 - 200, wallY, wallWidth, wallHeight, { 
+                        isStatic: true, label: 'wall',
+                        render: { sprite: { texture: 'column.png', xScale: 0.8, yScale: 1.5 } } 
+                    });
+                    const wall2 = Bodies.rectangle(window.innerWidth / 2 + 100, wallY, wallWidth, wallHeight, { 
+                        isStatic: true, label: 'wall',
+                        render: { sprite: { texture: 'column.png', xScale: 0.8, yScale: 1.5 } } 
+                    });
+                    Composite.add(engine.world, [wall1, wall2]);
+                }
+            }
+
             function createTargets() {
+                Composite.allBodies(engine.world).forEach(body => { if(body.label === 'target') Composite.remove(engine.world, body); });
                 const stack = [];
                 for (let row = 0; row < 4; row++) {
                     for (let col = 0; col < 4 - row; col++) {
                         let x = window.innerWidth - 300 + (col * 65) + (row * 32);
                         let y = window.innerHeight - 100 - (row * 65);
-                        
-                        // --- สร้างเป้าหมายเป็นรูปหมู (pig.png) ---
                         stack.push(Bodies.rectangle(x, y, 60, 60, { 
                             label: 'target', density: 0.001, friction: 0.8,
-                            render: { 
-                                sprite: {
-                                    texture: 'pig.png', // ใช้ไฟล์ pig.png
-                                    xScale: 0.6, // <-- ปรับขนาดหมูที่นี่ (ถ้ารูปใหญ่ไปให้ลดเลขนี้)
-                                    yScale: 0.6 // <-- ปรับขนาดหมูที่นี่
-                                }
-                            } 
+                            render: { sprite: { texture: 'pig.png', xScale: 0.5, yScale: 0.5 } } 
                         }));
                     }
                 }
@@ -227,66 +300,39 @@
 
             function resetBall() {
                 if (ball) Composite.remove(engine.world, ball);
-                
-                // --- สร้างลูกบอลเป็นรูปนก (bird.png) ---
-                ball = Bodies.circle(150, window.innerHeight - 300, 25, { 
-                    restitution: 0.5, density: 0.02,
-                    render: { 
-                        sprite: {
-                            texture: 'bird.png', // ใช้ไฟล์ bird.png
-                            xScale: 1.0, // <-- ปรับขนาดนกที่นี่ (ถ้ารูปใหญ่ไปให้ลดเลขนี้)
-                            yScale: 1.0  // <-- ปรับขนาดนกที่นี่
-                        }
-                    } 
+                ball = Bodies.circle(150, window.innerHeight - 300, 30, { 
+                    restitution: 0.6, density: BIRD_DENSITY, frictionAir: 0.01, 
+                    render: { sprite: { texture: 'bird.png', xScale: 0.8, yScale: 0.8 } } 
                 });
                 Body.setStatic(ball, true); 
                 Composite.add(engine.world, ball);
                 isAiming = false; maxForceInSession = 0;
+                ballFired = false; 
+                isTransitioning = false;
             }
 
-            // --- ลูปวาดเส้นนำทางแบบจุด (Dots) ---
             function drawGuideLoop() {
                 gCtx.clearRect(0, 0, guideCanvas.width, guideCanvas.height);
-
                 if (ball && ball.isStatic) {
-                    const startX = ball.position.x;
-                    const startY = ball.position.y;
-                    
+                    const startX = ball.position.x; const startY = ball.position.y;
                     if (isNaN(currentAngle)) currentAngle = 0;
                     if (isNaN(currentForce)) currentForce = 0;
-
                     const forceForLine = Math.max(currentForce, 10.0); 
                     const visualVelocity = Math.min(forceForLine * 3, 50); 
-                    
                     let vx = Math.cos(currentAngle) * visualVelocity;
                     let vy = Math.sin(currentAngle) * visualVelocity;
-                    let x = startX;
-                    let y = startY;
-
+                    let x = startX; let y = startY;
                     for (let i = 0; i < 30; i++) {
-                        x += vx;
-                        y += vy;
-                        vy += 1.0; 
-
+                        x += vx; y += vy; vy += 1.0; 
                         if (i % 3 === 0) {
-                            gCtx.beginPath();
-                            gCtx.arc(x, y, 5, 0, 2*Math.PI); 
-                            gCtx.fillStyle = 'white'; 
-                            gCtx.fill();
-                            gCtx.lineWidth = 2; 
-                            gCtx.strokeStyle = 'black'; 
-                            gCtx.stroke();
+                            gCtx.beginPath(); gCtx.arc(x, y, 5, 0, 2*Math.PI); 
+                            gCtx.fillStyle = 'white'; gCtx.fill(); 
+                            gCtx.lineWidth = 2; gCtx.strokeStyle = 'black'; gCtx.stroke();
                         }
                     }
-                    
-                    gCtx.beginPath();
-                    gCtx.arc(x, y, 10, 0, 2*Math.PI);
-                    gCtx.fillStyle = '#e74c3c'; 
-                    gCtx.fill();
-                    gCtx.strokeStyle = 'white';
-                    gCtx.stroke();
+                    gCtx.beginPath(); gCtx.arc(x, y, 10, 0, 2*Math.PI);
+                    gCtx.fillStyle = '#e74c3c'; gCtx.fill(); gCtx.strokeStyle = 'white'; gCtx.stroke();
                 }
-
                 requestAnimationFrame(drawGuideLoop);
             }
 
@@ -296,18 +342,61 @@
                 Body.applyForce(ball, ball.position, { x: Math.cos(currentAngle) * power, y: Math.sin(currentAngle) * power });
                 playSound(sfxShoot); 
                 isAiming = false;
+                ballFired = true; 
                 document.getElementById('status').innerText = "💥 FIRED! (" + maxForceInSession.toFixed(2) + " N) 💥";
                 maxForceInSession = 0;
             }
 
-            function restartGame() {
+            // --- 3 ROUNDS LOGIC & SOUNDS ---
+            function fullResetGame() {
                 if (!engine) return;
+                currentRound = 1;
+                updateWalls(1); 
                 resetBall();
-                Composite.allBodies(engine.world).forEach(body => { if(body.label === 'target') Composite.remove(engine.world, body); });
                 createTargets();
                 score = 0; 
                 document.getElementById('score-val').innerText = score;
-                document.getElementById('status').innerText = "Game Reset! Ready!";
+                document.getElementById('status').innerText = "READY FOR ROUND 1";
+                
+                showMessage("ROUND 1"); 
+                playSound(sfxRound1);
+            }
+
+            function autoProceed() {
+                const pigsLeft = Composite.allBodies(engine.world).filter(b => b.label === 'target').length;
+
+                if (pigsLeft === 0) {
+                    showMessage("YOU WIN!");
+                    playSound(sfxGameOver); 
+                    document.getElementById('status').innerText = "ALL CLEARED! PULL TO RESTART";
+                    currentRound = 4; // จบเกม
+                    return;
+                }
+
+                if (currentRound === 1) {
+                    currentRound = 2;
+                    resetBall();
+                    updateWalls(2); 
+                    document.getElementById('status').innerText = "ROUND 2: 1 WALL!";
+                    
+                    showMessage("ROUND 2");
+                    playSound(sfxRound2);
+                } 
+                else if (currentRound === 2) {
+                    currentRound = 3;
+                    resetBall();
+                    updateWalls(3); 
+                    document.getElementById('status').innerText = "ROUND 3: 2 WALLS!";
+                    
+                    showMessage("ROUND 3");
+                    playSound(sfxRound3);
+                }
+                else if (currentRound === 3) {
+                    showMessage("GAME OVER");
+                    playSound(sfxGameOver);
+                    document.getElementById('status').innerText = "FINISH! PULL TO RESTART";
+                    currentRound = 4; // จบเกม
+                }
             }
             
             function zeroSensor() {
@@ -324,7 +413,6 @@
 
             connectBtn.addEventListener('click', async () => {
                 playSound(sfxScore); 
-                
                 initPhysics(); 
                 connectBtn.disabled = true; 
 
@@ -342,18 +430,14 @@
 
                     if (forceSensor && accelX && accelY) {
                         forceSensor.setEnabled(true); accelX.setEnabled(true); accelY.setEnabled(true);
-                        
                         statusDisplay.innerText = "READY! Pull trigger!";
-                        connectBtn.style.display = 'none';
-                        zeroBtn.style.display = 'block';
-                        resetBtn.style.display = 'block';
+                        connectBtn.style.display = 'none'; zeroBtn.style.display = 'block'; resetBtn.style.display = 'block';
 
                         await delay(500); 
                         gdxDevice.start(20);
                         setTimeout(() => { zeroSensor(); }, 1000);
 
                         let ax = 0, ay = 0;
-
                         const handleSensor = () => {
                             if (ax === 0 && ay === 0) ay = -9.8; 
                             currentAngle = Math.atan2(-ay, ax); 
@@ -362,15 +446,16 @@
                             currentForce = Math.abs(rawForce - forceOffset);
                             forceDisplay.innerText = currentForce.toFixed(2);
 
-                            if (isAiming && currentForce > maxForceInSession) {
-                                maxForceInSession = currentForce;
-                            }
+                            if (isAiming && currentForce > maxForceInSession) maxForceInSession = currentForce;
 
                             if (!isAiming && currentForce > 2.0) {
-                                if (ball.position.x > 300) restartGame();
-                                isAiming = true; 
-                                maxForceInSession = currentForce;
-                                statusDisplay.innerText = "🎯 AIMING...";
+                                if (currentRound === 4) {
+                                    fullResetGame();
+                                } else if (!ballFired) {
+                                    isAiming = true; 
+                                    maxForceInSession = currentForce;
+                                    statusDisplay.innerText = "🎯 AIMING...";
+                                }
                             } 
                             else if (isAiming && currentForce < FIRE_THRESHOLD) {
                                 fireBall();
@@ -379,15 +464,14 @@
                         accelX.on('value-changed', (s) => { ax = s.value; handleSensor(); });
                         accelY.on('value-changed', (s) => { ay = s.value; handleSensor(); });
                         forceSensor.on('value-changed', (s) => { rawForce = s.value; handleSensor(); });
-                        
                     } else { alert("Sensor Mismatch"); connectBtn.disabled = false; }
                 } catch (err) { console.error(err); statusDisplay.innerText = "Error: " + err.message; connectBtn.disabled = false; }
             });
             
             zeroBtn.addEventListener('click', zeroSensor);
-            resetBtn.addEventListener('click', restartGame);
+            resetBtn.addEventListener('click', fullResetGame);
             document.addEventListener('keydown', (e) => {
-                if (e.code === 'Space') { e.preventDefault(); restartGame(); }
+                if (e.code === 'Space') { e.preventDefault(); fullResetGame(); }
             });
         }
     </script>
