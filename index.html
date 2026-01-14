@@ -2,7 +2,7 @@
 <html lang="th">
 <head>
     <meta charset="UTF-8">
-    <title>GDX-FOR Carnival (Final Polish)</title>
+    <title>GDX-FOR Carnival (Pixel Perfect)</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link href="https://fonts.googleapis.com/css2?family=Bangers&family=Chakra+Petch:wght@400;700&display=swap" rel="stylesheet">
 
@@ -83,6 +83,7 @@
     <audio id="audio-round2" src="round2.mp3"></audio>
     <audio id="audio-round3" src="round3.mp3"></audio>
     <audio id="audio-gameover" src="gameover.mp3"></audio>
+    <audio id="audio-win" src="youwin.mp3"></audio>
 
     <div id="error-box"><h3>⚠️ Files Missing</h3><p id="error-msg">Check libraries & images.</p></div>
 
@@ -140,6 +141,7 @@
         const sfxRound2 = document.getElementById('audio-round2');
         const sfxRound3 = document.getElementById('audio-round3');
         const sfxGameOver = document.getElementById('audio-gameover');
+        const sfxWin = document.getElementById('audio-win');
 
         function playSound(el) { if(el){ el.currentTime=0; el.play().catch(()=>{}); } }
 
@@ -167,8 +169,6 @@
             let currentRound = 1; 
             let ballFired = false; 
             let isTransitioning = false;
-            
-            // ตัวแปรใหม่สำหรับล็อคการรีสตาร์ท
             let canRestart = false; 
 
             // ==========================================
@@ -232,7 +232,7 @@
                     if (ballFired && !isTransitioning) {
                         if (ball.position.x > window.innerWidth || ball.position.y > window.innerHeight + 100 || (ball.speed < 0.05 && ball.position.x > 200)) {
                             isTransitioning = true;
-                            // ลดเวลาหน่วงลงเหลือ 2.5 วินาที (2500ms)
+                            // หน่วงเวลา 2.5 วิ ก่อนเช็คผล
                             setTimeout(() => { autoProceed(); }, 2500); 
                         }
                     }
@@ -241,31 +241,46 @@
                 requestAnimationFrame(drawGuideLoop);
             }
 
+            // --- 🔧 สูตรคำนวณกำแพง (Hitbox ตรงเป๊ะ) ---
+            function createWall(x, y) {
+                // ขนาดรูปจริงของเสา
+                const originalW = 19;
+                const originalH = 82;
+
+                // ขนาด Hitbox ที่ต้องการในเกม
+                const targetW = 50;  
+                const targetH = 250; 
+
+                const scaleX = targetW / originalW;
+                const scaleY = targetH / originalH;
+
+                return Bodies.rectangle(x, y, targetW, targetH, { 
+                    isStatic: true, label: 'wall',
+                    render: { 
+                        sprite: { 
+                            texture: 'column.png', 
+                            xScale: scaleX, 
+                            yScale: scaleY 
+                        } 
+                    } 
+                });
+            }
+
             function updateWalls(round) {
                 Composite.allBodies(engine.world).forEach(b => {
                     if (b.label === 'wall') Composite.remove(engine.world, b);
                 });
 
-                const wallWidth = 50;  
-                const wallHeight = 300; 
-                const wallY = window.innerHeight - 110; 
+                const wallHeight = 250; 
+                const wallY = (window.innerHeight - 20) - (wallHeight / 2);
                 
                 if (round === 2) {
-                    const wall = Bodies.rectangle(window.innerWidth / 2 - 50, wallY, wallWidth, wallHeight, { 
-                        isStatic: true, label: 'wall',
-                        render: { sprite: { texture: 'column.png', xScale: 0.8, yScale: 1.5 } } 
-                    });
+                    const wall = createWall(window.innerWidth / 2 - 50, wallY);
                     Composite.add(engine.world, wall);
                 } 
                 else if (round === 3) {
-                    const wall1 = Bodies.rectangle(window.innerWidth / 2 - 200, wallY, wallWidth, wallHeight, { 
-                        isStatic: true, label: 'wall',
-                        render: { sprite: { texture: 'column.png', xScale: 0.8, yScale: 1.5 } } 
-                    });
-                    const wall2 = Bodies.rectangle(window.innerWidth / 2 + 100, wallY, wallWidth, wallHeight, { 
-                        isStatic: true, label: 'wall',
-                        render: { sprite: { texture: 'column.png', xScale: 0.8, yScale: 1.5 } } 
-                    });
+                    const wall1 = createWall(window.innerWidth / 2 - 200, wallY);
+                    const wall2 = createWall(window.innerWidth / 2 + 100, wallY);
                     Composite.add(engine.world, [wall1, wall2]);
                 }
             }
@@ -277,9 +292,20 @@
                     for (let col = 0; col < 4 - row; col++) {
                         let x = window.innerWidth - 300 + (col * 65) + (row * 32);
                         let y = window.innerHeight - 100 - (row * 65);
+                        
+                        // --- 🔧 สูตรคำนวณหมู (Pig 100x100 -> Hitbox 60x60) ---
+                        // Target size (hitbox) = 60
+                        // Image size = 100
+                        // Scale = 60/100 = 0.6
                         stack.push(Bodies.rectangle(x, y, 60, 60, { 
                             label: 'target', density: 0.001, friction: 0.8,
-                            render: { sprite: { texture: 'pig.png', xScale: 0.5, yScale: 0.5 } } 
+                            render: { 
+                                sprite: { 
+                                    texture: 'pig.png', 
+                                    xScale: 0.6, // Hitbox 60 / Image 100 = 0.6 เป๊ะ!
+                                    yScale: 0.6 
+                                } 
+                            } 
                         }));
                     }
                 }
@@ -302,9 +328,19 @@
 
             function resetBall() {
                 if (ball) Composite.remove(engine.world, ball);
-                ball = Bodies.circle(150, window.innerHeight - 300, 30, { 
+                // --- 🔧 สูตรคำนวณนก (Bird 64x64 -> Radius 32) ---
+                // Radius 32 = Diameter 64
+                // Image 64
+                // Scale = 64/64 = 1.0 เป๊ะ!
+                ball = Bodies.circle(150, window.innerHeight - 300, 32, { 
                     restitution: 0.6, density: BIRD_DENSITY, frictionAir: 0.01, 
-                    render: { sprite: { texture: 'bird.png', xScale: 0.8, yScale: 0.8 } } 
+                    render: { 
+                        sprite: { 
+                            texture: 'bird.png', 
+                            xScale: 1.0, 
+                            yScale: 1.0 
+                        } 
+                    } 
                 });
                 Body.setStatic(ball, true); 
                 Composite.add(engine.world, ball);
@@ -349,18 +385,16 @@
                 maxForceInSession = 0;
             }
 
-            // --- 3 ROUNDS LOGIC & SOUNDS ---
             function fullResetGame() {
                 if (!engine) return;
                 currentRound = 1;
-                canRestart = false; // Reset lock
+                canRestart = false; 
                 updateWalls(1); 
                 resetBall();
                 createTargets();
                 score = 0; 
                 document.getElementById('score-val').innerText = score;
                 document.getElementById('status').innerText = "READY FOR ROUND 1";
-                
                 showMessage("ROUND 1"); 
                 playSound(sfxRound1);
             }
@@ -368,19 +402,15 @@
             function autoProceed() {
                 const pigsLeft = Composite.allBodies(engine.world).filter(b => b.label === 'target').length;
 
-                // --- เช็คเงื่อนไขจบเกม ---
                 if (pigsLeft === 0) {
-                    // ชนะ
-                    endGame("YOU WIN!", "ALL CLEARED! PULL TO RESTART");
+                    endGame("YOU WIN!", "ALL CLEARED! PULL TO RESTART", true);
                     return;
                 }
                 if (currentRound === 3) {
-                    // แพ้ (หมด 3 รอบแล้วหมูไม่หมด)
-                    endGame("GAME OVER", "FINISH! PULL TO RESTART");
+                    endGame("GAME OVER", "FINISH! PULL TO RESTART", false);
                     return;
                 }
 
-                // --- ไปรอบถัดไป ---
                 if (currentRound === 1) {
                     currentRound = 2;
                     resetBall();
@@ -399,18 +429,18 @@
                 }
             }
 
-            function endGame(msg, statusMsg) {
+            function endGame(msg, statusMsg, isWin) {
                 showMessage(msg);
-                playSound(sfxGameOver);
+                if (isWin) {
+                    playSound(sfxWin);
+                } else {
+                    playSound(sfxGameOver);
+                }
                 document.getElementById('status').innerText = statusMsg;
-                currentRound = 4; // สถานะจบเกม
+                currentRound = 4; 
                 
-                // *** Input Lock System ***
-                canRestart = false; // ล็อคก่อน
-                // รอ 3 วินาที (ให้เสียง Game Over จบก่อน) ค่อยให้กดเริ่มใหม่ได้
-                setTimeout(() => {
-                    canRestart = true; 
-                }, 3000);
+                canRestart = false; 
+                setTimeout(() => { canRestart = true; }, 3000);
             }
             
             function zeroSensor() {
@@ -424,6 +454,16 @@
             const forceDisplay = document.getElementById('force-val');
             const angleDisplay = document.getElementById('angle-val');
             const statusDisplay = document.getElementById('status');
+
+            document.addEventListener('keydown', (e) => {
+                if (e.code === 'Space') { e.preventDefault(); fullResetGame(); }
+                if (e.code === 'KeyW') {
+                    Composite.allBodies(engine.world).forEach(b => {
+                        if(b.label === 'target') Composite.remove(engine.world, b);
+                    });
+                    endGame("YOU WIN!", "CHEAT ACTIVATED!", true);
+                }
+            });
 
             connectBtn.addEventListener('click', async () => {
                 playSound(sfxScore); 
@@ -464,7 +504,6 @@
 
                             if (!isAiming && currentForce > 2.0) {
                                 if (currentRound === 4) {
-                                    // *** เช็คเงื่อนไขล็อคตรงนี้ ***
                                     if (canRestart) {
                                         fullResetGame();
                                     }
@@ -487,9 +526,6 @@
             
             zeroBtn.addEventListener('click', zeroSensor);
             resetBtn.addEventListener('click', fullResetGame);
-            document.addEventListener('keydown', (e) => {
-                if (e.code === 'Space') { e.preventDefault(); fullResetGame(); }
-            });
         }
     </script>
 </body>
