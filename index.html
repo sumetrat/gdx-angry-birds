@@ -2,7 +2,7 @@
 <html lang="th">
 <head>
     <meta charset="UTF-8">
-    <title>GDX-FOR Carnival (Fixed Audio Delay)</title>
+    <title>GDX-FOR Carnival (Final Polish)</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link href="https://fonts.googleapis.com/css2?family=Bangers&family=Chakra+Petch:wght@400;700&display=swap" rel="stylesheet">
 
@@ -167,6 +167,9 @@
             let currentRound = 1; 
             let ballFired = false; 
             let isTransitioning = false;
+            
+            // ตัวแปรใหม่สำหรับล็อคการรีสตาร์ท
+            let canRestart = false; 
 
             // ==========================================
             // 🔧 TUNING ZONE
@@ -229,9 +232,8 @@
                     if (ballFired && !isTransitioning) {
                         if (ball.position.x > window.innerWidth || ball.position.y > window.innerHeight + 100 || (ball.speed < 0.05 && ball.position.x > 200)) {
                             isTransitioning = true;
-                            // --- แก้ไข Delay ตรงนี้ (จาก 2000 เป็น 4000) ---
-                            // รอ 4 วินาที เพื่อให้เสียงระเบิดจบก่อน ค่อยประกาศผล
-                            setTimeout(() => { autoProceed(); }, 4000); 
+                            // ลดเวลาหน่วงลงเหลือ 2.5 วินาที (2500ms)
+                            setTimeout(() => { autoProceed(); }, 2500); 
                         }
                     }
                 });
@@ -351,6 +353,7 @@
             function fullResetGame() {
                 if (!engine) return;
                 currentRound = 1;
+                canRestart = false; // Reset lock
                 updateWalls(1); 
                 resetBall();
                 createTargets();
@@ -365,20 +368,24 @@
             function autoProceed() {
                 const pigsLeft = Composite.allBodies(engine.world).filter(b => b.label === 'target').length;
 
+                // --- เช็คเงื่อนไขจบเกม ---
                 if (pigsLeft === 0) {
-                    showMessage("YOU WIN!");
-                    playSound(sfxGameOver); 
-                    document.getElementById('status').innerText = "ALL CLEARED! PULL TO RESTART";
-                    currentRound = 4; // จบเกม
+                    // ชนะ
+                    endGame("YOU WIN!", "ALL CLEARED! PULL TO RESTART");
+                    return;
+                }
+                if (currentRound === 3) {
+                    // แพ้ (หมด 3 รอบแล้วหมูไม่หมด)
+                    endGame("GAME OVER", "FINISH! PULL TO RESTART");
                     return;
                 }
 
+                // --- ไปรอบถัดไป ---
                 if (currentRound === 1) {
                     currentRound = 2;
                     resetBall();
                     updateWalls(2); 
                     document.getElementById('status').innerText = "ROUND 2: 1 WALL!";
-                    
                     showMessage("ROUND 2");
                     playSound(sfxRound2);
                 } 
@@ -387,16 +394,23 @@
                     resetBall();
                     updateWalls(3); 
                     document.getElementById('status').innerText = "ROUND 3: 2 WALLS!";
-                    
                     showMessage("ROUND 3");
                     playSound(sfxRound3);
                 }
-                else if (currentRound === 3) {
-                    showMessage("GAME OVER");
-                    playSound(sfxGameOver);
-                    document.getElementById('status').innerText = "FINISH! PULL TO RESTART";
-                    currentRound = 4; // จบเกม
-                }
+            }
+
+            function endGame(msg, statusMsg) {
+                showMessage(msg);
+                playSound(sfxGameOver);
+                document.getElementById('status').innerText = statusMsg;
+                currentRound = 4; // สถานะจบเกม
+                
+                // *** Input Lock System ***
+                canRestart = false; // ล็อคก่อน
+                // รอ 3 วินาที (ให้เสียง Game Over จบก่อน) ค่อยให้กดเริ่มใหม่ได้
+                setTimeout(() => {
+                    canRestart = true; 
+                }, 3000);
             }
             
             function zeroSensor() {
@@ -450,7 +464,10 @@
 
                             if (!isAiming && currentForce > 2.0) {
                                 if (currentRound === 4) {
-                                    fullResetGame();
+                                    // *** เช็คเงื่อนไขล็อคตรงนี้ ***
+                                    if (canRestart) {
+                                        fullResetGame();
+                                    }
                                 } else if (!ballFired) {
                                     isAiming = true; 
                                     maxForceInSession = currentForce;
