@@ -2,7 +2,7 @@
 <html lang="th">
 <head>
     <meta charset="UTF-8">
-    <title>GDX-FOR Carnival (Pixel Perfect)</title>
+    <title>GDX-FOR Carnival (Final Tree Fix)</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link href="https://fonts.googleapis.com/css2?family=Bangers&family=Chakra+Petch:wght@400;700&display=swap" rel="stylesheet">
 
@@ -10,10 +10,14 @@
         body { 
             margin: 0; padding: 0; overflow: hidden; 
             background-color: #87CEEB;
+            
+            /* --- 🔧 แก้ไข BACKGROUND (ต้นไม้มาแน่นอน) --- */
             background-image: url('background.png'); 
-            background-size: cover; 
-            background-position: center;
             background-repeat: no-repeat;
+            background-position: center bottom; /* จัดให้อยู่ล่างสุด */
+            background-size: 100% 100%; /* บังคับยืดให้เต็มจอพอดีเป๊ะ (ไม่ซูมจนล้น) */
+            background-attachment: fixed; /* ล็อคภาพให้นิ่ง */
+            
             font-family: 'Chakra Petch', sans-serif; 
             user-select: none; color: white;
         }
@@ -193,7 +197,11 @@
                 });
                 render.canvas.id = "game-layer";
 
-                const ground = Bodies.rectangle(window.innerWidth/2, window.innerHeight+30, window.innerWidth, 100, { isStatic: true, render: { fillStyle: '#27ae60' } });
+                // พื้นดินโปร่งใส (Transparent)
+                const ground = Bodies.rectangle(window.innerWidth/2, window.innerHeight+30, window.innerWidth, 100, { 
+                    isStatic: true, 
+                    render: { fillStyle: 'transparent' } 
+                });
                 const platform = Bodies.rectangle(150, window.innerHeight - 250, 200, 30, { isStatic: true, render: { fillStyle: '#7f8c8d' } });
 
                 Composite.add(engine.world, [ground, platform]);
@@ -232,7 +240,7 @@
                     if (ballFired && !isTransitioning) {
                         if (ball.position.x > window.innerWidth || ball.position.y > window.innerHeight + 100 || (ball.speed < 0.05 && ball.position.x > 200)) {
                             isTransitioning = true;
-                            // หน่วงเวลา 2.5 วิ ก่อนเช็คผล
+                            // หน่วงเวลา 2.5 วินาที
                             setTimeout(() => { autoProceed(); }, 2500); 
                         }
                     }
@@ -241,28 +249,15 @@
                 requestAnimationFrame(drawGuideLoop);
             }
 
-            // --- 🔧 สูตรคำนวณกำแพง (Hitbox ตรงเป๊ะ) ---
             function createWall(x, y) {
-                // ขนาดรูปจริงของเสา
-                const originalW = 19;
-                const originalH = 82;
-
-                // ขนาด Hitbox ที่ต้องการในเกม
-                const targetW = 50;  
-                const targetH = 250; 
-
+                const originalW = 19; const originalH = 82;
+                const targetW = 50;  const targetH = 250; 
                 const scaleX = targetW / originalW;
                 const scaleY = targetH / originalH;
 
                 return Bodies.rectangle(x, y, targetW, targetH, { 
                     isStatic: true, label: 'wall',
-                    render: { 
-                        sprite: { 
-                            texture: 'column.png', 
-                            xScale: scaleX, 
-                            yScale: scaleY 
-                        } 
-                    } 
+                    render: { sprite: { texture: 'column.png', xScale: scaleX, yScale: scaleY } } 
                 });
             }
 
@@ -292,20 +287,9 @@
                     for (let col = 0; col < 4 - row; col++) {
                         let x = window.innerWidth - 300 + (col * 65) + (row * 32);
                         let y = window.innerHeight - 100 - (row * 65);
-                        
-                        // --- 🔧 สูตรคำนวณหมู (Pig 100x100 -> Hitbox 60x60) ---
-                        // Target size (hitbox) = 60
-                        // Image size = 100
-                        // Scale = 60/100 = 0.6
                         stack.push(Bodies.rectangle(x, y, 60, 60, { 
                             label: 'target', density: 0.001, friction: 0.8,
-                            render: { 
-                                sprite: { 
-                                    texture: 'pig.png', 
-                                    xScale: 0.6, // Hitbox 60 / Image 100 = 0.6 เป๊ะ!
-                                    yScale: 0.6 
-                                } 
-                            } 
+                            render: { sprite: { texture: 'pig.png', xScale: 0.6, yScale: 0.6 } } 
                         }));
                     }
                 }
@@ -328,19 +312,9 @@
 
             function resetBall() {
                 if (ball) Composite.remove(engine.world, ball);
-                // --- 🔧 สูตรคำนวณนก (Bird 64x64 -> Radius 32) ---
-                // Radius 32 = Diameter 64
-                // Image 64
-                // Scale = 64/64 = 1.0 เป๊ะ!
                 ball = Bodies.circle(150, window.innerHeight - 300, 32, { 
                     restitution: 0.6, density: BIRD_DENSITY, frictionAir: 0.01, 
-                    render: { 
-                        sprite: { 
-                            texture: 'bird.png', 
-                            xScale: 1.0, 
-                            yScale: 1.0 
-                        } 
-                    } 
+                    render: { sprite: { texture: 'bird.png', xScale: 1.0, yScale: 1.0 } } 
                 });
                 Body.setStatic(ball, true); 
                 Composite.add(engine.world, ball);
@@ -438,7 +412,6 @@
                 }
                 document.getElementById('status').innerText = statusMsg;
                 currentRound = 4; 
-                
                 canRestart = false; 
                 setTimeout(() => { canRestart = true; }, 3000);
             }
